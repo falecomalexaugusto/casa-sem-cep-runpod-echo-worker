@@ -158,3 +158,45 @@ RUNPOD_API_TOKEN=<real token>
 RUNPOD_CALLBACK_URL=https://app.meustatus.com/api/runpod/callback
 RUNPOD_CALLBACK_SECRET=<same secret configured in RunPod>
 ```
+
+## Structured Mock Job
+
+The worker also supports a lightweight structured payload type:
+
+```text
+event_candidates_mock
+```
+
+Example payload:
+
+```json
+{
+  "input": {
+    "job_id": 999,
+    "tipo": "event_candidates_mock",
+    "payload_json": {
+      "episodio_id": 1,
+      "source": "manual",
+      "transcription": "short transcript text",
+      "chapter": "teste",
+      "area": "eletrica",
+      "tool": "multimetro",
+      "risk": "baixo",
+      "notes": "mock"
+    },
+    "callback_url": ""
+  }
+}
+```
+
+Expected `result_json`:
+
+```json
+{
+  "summary": "Payload validado com sucesso",
+  "echo": true,
+  "tipo": "event_candidates_mock",
+  "received_fields": 8,
+  "transcription_length": 21
+}
+```
