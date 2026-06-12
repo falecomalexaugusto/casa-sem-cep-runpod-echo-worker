@@ -200,3 +200,47 @@ Expected `result_json`:
   "transcription_length": 21
 }
 ```
+
+## Storage Test Job
+
+The worker supports a lightweight S3-compatible RunPod Storage validation job:
+
+```text
+storage_test
+```
+
+Required endpoint environment variables:
+
+```text
+RUNPOD_STORAGE_BUCKET=zozga7skni
+RUNPOD_STORAGE_ENDPOINT=https://s3api-eu-cz-1.runpod.io
+RUNPOD_STORAGE_REGION=eu-cz-1
+RUNPOD_STORAGE_ACCESS_KEY=<real value>
+RUNPOD_STORAGE_SECRET_KEY=<real value>
+```
+
+Example payload:
+
+```json
+{
+  "input": {
+    "job_id": 123,
+    "tipo": "storage_test",
+    "payload_json": {
+      "message": "runpod-storage-test"
+    },
+    "callback_url": "https://app.meustatus.com/api/runpod/callback"
+  }
+}
+```
+
+Expected `result_json`:
+
+```json
+{
+  "message": "storage-ok",
+  "bucket": "zozga7skni",
+  "object_key": "tests/job-123/storage-test.json",
+  "read_back_ok": true
+}
+```
