@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
+import boto3
 import requests
 import runpod
+from botocore.client import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 
 CALLBACK_SECRET_ENV = "RUNPOD_CALLBACK_SECRET"
@@ -39,8 +43,52 @@ def _get_transcription(payload_json: dict[str, Any]) -> str:
     return str(value)
 
 
+def _build_s3_client():
+    endpoint = os.environ["RUNPOD_STORAGE_ENDPOINT"]
+    region = os.environ.get("RUNPOD_STORAGE_REGION") or "us-east-1"
+    access_key = os.environ["RUNPOD_STORAGE_ACCESS_KEY"]
+    secret_key = os.environ["RUNPOD_STORAGE_SECRET_KEY"]
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=Config(signature_version="s3v4"),
+    )
+
+
+def _run_storage_test(job_id: Any) -> dict[str, Any]:
+    bucket = os.environ["RUNPOD_STORAGE_BUCKET"]
+    object_key = f"tests/job-{job_id}/storage-test.json"
+    content = {
+        "message": "storage-ok",
+        "source": "runpod-worker",
+        "job_id": job_id,
+    }
+    body = json.dumps(content, ensure_ascii=False).encode("utf-8")
+    s3 = _build_s3_client()
+    s3.put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=body,
+        ContentType="application/json",
+    )
+    read_response = s3.get_object(Bucket=bucket, Key=object_key)
+    read_back = json.loads(read_response["Body"].read().decode("utf-8"))
+    return {
+        "message": "storage-ok",
+        "bucket": bucket,
+        "object_key": object_key,
+        "read_back_ok": read_back == content,
+    }
+
+
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
+    if tipo == "storage_test":
+        return _run_storage_test(input_data.get("job_id"))
+
     if tipo == "event_candidates_mock":
         transcription = _get_transcription(payload_json)
         return {
@@ -104,17 +152,29 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
-    result_json = _build_result_json(tipo, input_data)
+    try:
+        result_json = _build_result_json(tipo, input_data)
+        status = "completed"
+        error_message = None
+    except (KeyError, BotoCoreError, ClientError, ValueError, TypeError) as exc:
+        result_json = {
+            "message": "storage-error" if tipo == "storage_test" else "worker-error",
+            "tipo": tipo,
+            "error": exc.__class__.__name__,
+        }
+        status = "failed"
+        error_message = f"{exc.__class__.__name__}: {exc}"
 
-    completed_callback = _safe_callback(
-        callback_url,
-        {
-            "job_id": job_id,
-            "status": "completed",
-            "runpod_request_id": runpod_request_id,
-            "result_json": result_json,
-        },
-    )
+    completed_payload = {
+        "job_id": job_id,
+        "status": status,
+        "runpod_request_id": runpod_request_id,
+        "result_json": result_json,
+    }
+    if error_message:
+        completed_payload["error_message"] = error_message
+
+    completed_callback = _safe_callback(callback_url, completed_payload)
 
     return {
         "job_id": job_id,
