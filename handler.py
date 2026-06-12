@@ -1,4 +1,4 @@
-"""Minimal RunPod Serverless echo worker for Casa sem CEP OS."""
+"""Minimal RunPod Serverless worker for Casa sem CEP OS lightweight tests."""
 
 from __future__ import annotations
 
@@ -18,11 +18,45 @@ def _get_input(event: dict[str, Any]) -> dict[str, Any]:
     return input_data if isinstance(input_data, dict) else {}
 
 
-def _get_message(input_data: dict[str, Any]) -> str:
+def _get_payload_json(input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = input_data.get("payload_json") or {}
-    if not isinstance(payload_json, dict):
-        payload_json = {}
+    return payload_json if isinstance(payload_json, dict) else {}
+
+
+def _get_message(input_data: dict[str, Any]) -> str:
+    payload_json = _get_payload_json(input_data)
     return str(input_data.get("message") or payload_json.get("message") or "ping")
+
+
+def _get_transcription(payload_json: dict[str, Any]) -> str:
+    value = (
+        payload_json.get("transcription")
+        or payload_json.get("transcription_text")
+        or payload_json.get("transcript")
+        or payload_json.get("text")
+        or ""
+    )
+    return str(value)
+
+
+def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
+    payload_json = _get_payload_json(input_data)
+    if tipo == "event_candidates_mock":
+        transcription = _get_transcription(payload_json)
+        return {
+            "summary": "Payload validado com sucesso",
+            "echo": True,
+            "tipo": tipo,
+            "received_fields": len(payload_json),
+            "transcription_length": len(transcription),
+        }
+
+    message = _get_message(input_data)
+    return {
+        "message": "pong" if message == "ping" else message,
+        "echo": True,
+        "tipo": tipo,
+    }
 
 
 def _post_callback(callback_url: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -60,7 +94,6 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
     tipo = input_data.get("tipo", "echo")
     callback_url = input_data.get("callback_url")
     runpod_request_id = event.get("id") or input_data.get("runpod_request_id")
-    message = _get_message(input_data)
 
     running_callback = _safe_callback(
         callback_url,
@@ -71,11 +104,7 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
-    result_json = {
-        "message": "pong" if message == "ping" else message,
-        "echo": True,
-        "tipo": tipo,
-    }
+    result_json = _build_result_json(tipo, input_data)
 
     completed_callback = _safe_callback(
         callback_url,
@@ -90,6 +119,8 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "job_id": job_id,
         "runpod_request_id": runpod_request_id,
+        "received_fields": result_json.get("received_fields"),
+        "transcription_length": result_json.get("transcription_length"),
         "result_json": result_json,
         "callbacks": {
             "running": running_callback,
