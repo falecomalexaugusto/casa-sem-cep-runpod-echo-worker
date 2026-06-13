@@ -281,3 +281,50 @@ Expected `result_json` shape:
   "RUNPOD_STORAGE_SECRET_KEY": true
 }
 ```
+
+## Text Artifact Test Job
+
+The worker supports a small real text artifact persistence test for Casa sem CEP OS.
+
+This job does not use GPU, AI models, video, Whisper, Qwen, or MiniCPM. It writes and reads back a small UTF-8 text file in RunPod Storage.
+
+Job type:
+
+```text
+artifact_text_test
+```
+
+Object path:
+
+```text
+artifacts/text/job-<job_id>/transcricao_mock.txt
+```
+
+Example payload:
+
+```json
+{
+  "input": {
+    "job_id": 123,
+    "tipo": "artifact_text_test",
+    "payload_json": {
+      "episode_title": "Teste de integração RunPod Storage",
+      "artifact_type": "transcricao_mock"
+    },
+    "callback_url": "https://app.meustatus.com/api/runpod/callback"
+  }
+}
+```
+
+Expected `result_json` shape:
+
+```json
+{
+  "message": "artifact-text-ok",
+  "artifact_type": "transcricao_mock",
+  "bucket": "zozga7skni",
+  "object_key": "artifacts/text/job-123/transcricao_mock.txt",
+  "size_bytes": 180,
+  "read_back_ok": true
+}
+```
