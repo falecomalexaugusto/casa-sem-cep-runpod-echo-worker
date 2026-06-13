@@ -244,3 +244,40 @@ Expected `result_json`:
   "read_back_ok": true
 }
 ```
+
+## Storage Environment Check Job
+
+The worker supports a diagnostic job that validates only whether the RunPod endpoint environment variables are visible to the active worker revision.
+
+This job does not access S3, does not use `boto3`, and does not write files. It returns only booleans and never returns secret values.
+
+Job type:
+
+```text
+storage_env_check
+```
+
+Example payload:
+
+```json
+{
+  "input": {
+    "job_id": 123,
+    "tipo": "storage_env_check",
+    "payload_json": {},
+    "callback_url": "https://app.meustatus.com/api/runpod/callback"
+  }
+}
+```
+
+Expected `result_json` shape:
+
+```json
+{
+  "RUNPOD_STORAGE_BUCKET": true,
+  "RUNPOD_STORAGE_ENDPOINT": true,
+  "RUNPOD_STORAGE_REGION": true,
+  "RUNPOD_STORAGE_ACCESS_KEY": true,
+  "RUNPOD_STORAGE_SECRET_KEY": true
+}
+```
