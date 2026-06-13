@@ -95,6 +95,40 @@ def _run_storage_test(job_id: Any) -> dict[str, Any]:
     }
 
 
+def _run_artifact_text_test(input_data: dict[str, Any]) -> dict[str, Any]:
+    job_id = input_data.get("job_id")
+    payload_json = _get_payload_json(input_data)
+    episode_title = str(payload_json.get("episode_title") or "Teste de integração RunPod Storage")
+    artifact_type = str(payload_json.get("artifact_type") or "transcricao_mock")
+    bucket = os.environ["RUNPOD_STORAGE_BUCKET"]
+    object_key = f"artifacts/text/job-{job_id}/transcricao_mock.txt"
+    content = (
+        "Casa sem CEP OS - Artefato de teste\n\n"
+        f"Episodio: {episode_title}\n"
+        f"Tipo: {artifact_type}\n"
+        "Status: validado\n\n"
+        "Este arquivo representa o primeiro artefato textual persistido no RunPod Storage.\n"
+    )
+    body = content.encode("utf-8")
+    s3 = _build_s3_client()
+    s3.put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=body,
+        ContentType="text/plain; charset=utf-8",
+    )
+    read_response = s3.get_object(Bucket=bucket, Key=object_key)
+    read_back = read_response["Body"].read().decode("utf-8")
+    return {
+        "message": "artifact-text-ok",
+        "artifact_type": artifact_type,
+        "bucket": bucket,
+        "object_key": object_key,
+        "size_bytes": len(body),
+        "read_back_ok": read_back == content,
+    }
+
+
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
     if tipo == "storage_env_check":
@@ -102,6 +136,9 @@ def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
 
     if tipo == "storage_test":
         return _run_storage_test(input_data.get("job_id"))
+
+    if tipo == "artifact_text_test":
+        return _run_artifact_text_test(input_data)
 
     if tipo == "event_candidates_mock":
         transcription = _get_transcription(payload_json)
