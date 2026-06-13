@@ -200,6 +200,45 @@ def _run_transcription_metadata_mock(input_data: dict[str, Any]) -> dict[str, An
     }
 
 
+def _run_media_upload_test(input_data: dict[str, Any]) -> dict[str, Any]:
+    job_id = input_data.get("job_id")
+    payload_json = _get_payload_json(input_data)
+    media_file_id = payload_json.get("media_file_id") or input_data.get("media_file_id")
+    filename = str(payload_json.get("filename") or "media-file")
+    mime_type = str(payload_json.get("mime_type") or "application/octet-stream")
+    status = str(payload_json.get("status") or "registered")
+
+    bucket = os.environ["RUNPOD_STORAGE_BUCKET"]
+    object_key = f"artifacts/media/job-{job_id}/media_metadata.json"
+    metadata = {
+        "media_file_id": media_file_id,
+        "filename": filename,
+        "mime_type": mime_type,
+        "status": status,
+    }
+    body = json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8")
+
+    s3 = _build_s3_client()
+    s3.put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=body,
+        ContentType="application/json",
+    )
+    read_back = json.loads(s3.get_object(Bucket=bucket, Key=object_key)["Body"].read().decode("utf-8"))
+
+    return {
+        "message": "media-upload-test-ok",
+        "artifact_type": "media_metadata",
+        "media_file_id": media_file_id,
+        "bucket": bucket,
+        "object_key": object_key,
+        "content_type": "application/json",
+        "size_bytes": len(body),
+        "read_back_ok": read_back == metadata,
+    }
+
+
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
     if tipo == "storage_env_check":
@@ -213,6 +252,9 @@ def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
 
     if tipo == "transcription_metadata_mock":
         return _run_transcription_metadata_mock(input_data)
+
+    if tipo == "media_upload_test":
+        return _run_media_upload_test(input_data)
 
     if tipo == "event_candidates_mock":
         transcription = _get_transcription(payload_json)
