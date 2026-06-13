@@ -15,6 +15,13 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 CALLBACK_SECRET_ENV = "RUNPOD_CALLBACK_SECRET"
 CALLBACK_TIMEOUT_SECONDS = 20
+STORAGE_ENV_KEYS = (
+    "RUNPOD_STORAGE_BUCKET",
+    "RUNPOD_STORAGE_ENDPOINT",
+    "RUNPOD_STORAGE_REGION",
+    "RUNPOD_STORAGE_ACCESS_KEY",
+    "RUNPOD_STORAGE_SECRET_KEY",
+)
 
 
 def _get_input(event: dict[str, Any]) -> dict[str, Any]:
@@ -58,6 +65,10 @@ def _build_s3_client():
     )
 
 
+def _run_storage_env_check() -> dict[str, bool]:
+    return {key: bool(os.environ.get(key)) for key in STORAGE_ENV_KEYS}
+
+
 def _run_storage_test(job_id: Any) -> dict[str, Any]:
     bucket = os.environ["RUNPOD_STORAGE_BUCKET"]
     object_key = f"tests/job-{job_id}/storage-test.json"
@@ -86,6 +97,9 @@ def _run_storage_test(job_id: Any) -> dict[str, Any]:
 
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
+    if tipo == "storage_env_check":
+        return _run_storage_env_check()
+
     if tipo == "storage_test":
         return _run_storage_test(input_data.get("job_id"))
 
