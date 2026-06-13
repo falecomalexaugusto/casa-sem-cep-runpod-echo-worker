@@ -129,6 +129,77 @@ def _run_artifact_text_test(input_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _run_transcription_metadata_mock(input_data: dict[str, Any]) -> dict[str, Any]:
+    job_id = input_data.get("job_id")
+    payload_json = _get_payload_json(input_data)
+    episode_id = payload_json.get("episode_id")
+    episode_title = str(payload_json.get("episode_title") or "Teste de transcricao mock")
+    media_filename = str(payload_json.get("media_filename") or "video_teste.mp4")
+    duration_seconds = int(payload_json.get("duration_seconds") or 0)
+    language = str(payload_json.get("language") or "pt-BR")
+
+    bucket = os.environ["RUNPOD_STORAGE_BUCKET"]
+    txt_key = f"artifacts/transcriptions/job-{job_id}/transcription.txt"
+    metadata_key = f"artifacts/transcriptions/job-{job_id}/metadata.json"
+
+    transcription_text = (
+        "[00:00:00] Inicio do teste de transcricao mock.\n"
+        "[00:00:10] O sistema Casa sem CEP OS esta validando o pipeline.\n"
+        "[00:00:20] Este conteudo simula uma transcricao real.\n"
+    )
+    metadata = {
+        "episode_id": episode_id,
+        "episode_title": episode_title,
+        "media_filename": media_filename,
+        "duration_seconds": duration_seconds,
+        "language": language,
+        "segments": 3,
+        "generated_by": "transcription_metadata_mock",
+    }
+
+    txt_body = transcription_text.encode("utf-8")
+    metadata_body = json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8")
+
+    s3 = _build_s3_client()
+    s3.put_object(
+        Bucket=bucket,
+        Key=txt_key,
+        Body=txt_body,
+        ContentType="text/plain; charset=utf-8",
+    )
+    s3.put_object(
+        Bucket=bucket,
+        Key=metadata_key,
+        Body=metadata_body,
+        ContentType="application/json",
+    )
+
+    txt_read_back = s3.get_object(Bucket=bucket, Key=txt_key)["Body"].read().decode("utf-8")
+    metadata_read_back = json.loads(s3.get_object(Bucket=bucket, Key=metadata_key)["Body"].read().decode("utf-8"))
+
+    return {
+        "message": "transcription-metadata-ok",
+        "artifact_type": "transcricao_txt",
+        "bucket": bucket,
+        "object_key": txt_key,
+        "content_type": "text/plain",
+        "size_bytes": len(txt_body),
+        "read_back_ok": txt_read_back == transcription_text and metadata_read_back == metadata,
+        "segments": 3,
+        "duration_seconds": duration_seconds,
+        "language": language,
+        "extra_artifacts": [
+            {
+                "artifact_type": "transcricao_metadata",
+                "bucket": bucket,
+                "object_key": metadata_key,
+                "content_type": "application/json",
+                "size_bytes": len(metadata_body),
+            }
+        ],
+    }
+
+
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
     if tipo == "storage_env_check":
@@ -139,6 +210,9 @@ def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
 
     if tipo == "artifact_text_test":
         return _run_artifact_text_test(input_data)
+
+    if tipo == "transcription_metadata_mock":
+        return _run_transcription_metadata_mock(input_data)
 
     if tipo == "event_candidates_mock":
         transcription = _get_transcription(payload_json)
