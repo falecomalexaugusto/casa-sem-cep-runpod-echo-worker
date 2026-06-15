@@ -244,7 +244,6 @@ Expected `result_json`:
   "read_back_ok": true
 }
 ```
-
 ## Storage Environment Check Job
 
 The worker supports a diagnostic job that validates only whether the RunPod endpoint environment variables are visible to the active worker revision.
@@ -281,7 +280,6 @@ Expected `result_json` shape:
   "RUNPOD_STORAGE_SECRET_KEY": true
 }
 ```
-
 ## Text Artifact Test Job
 
 The worker supports a small real text artifact persistence test for Casa sem CEP OS.
@@ -328,3 +326,4 @@ Expected `result_json` shape:
   "read_back_ok": true
 }
 ```
+
