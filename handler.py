@@ -430,6 +430,119 @@ def _run_metadata_probe_ffprobe(input_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _audio_metadata_from_ffprobe(ffprobe_json: dict[str, Any]) -> dict[str, Any]:
+    streams = ffprobe_json.get("streams") or []
+    format_data = ffprobe_json.get("format") or {}
+    audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), {})
+
+    def _float_or_none(value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _int_or_none(value: Any) -> int | None:
+        try:
+            return int(float(value)) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "duration_seconds": _float_or_none(format_data.get("duration") or audio_stream.get("duration")),
+        "audio_codec": audio_stream.get("codec_name"),
+        "bit_rate": _int_or_none(format_data.get("bit_rate") or audio_stream.get("bit_rate")),
+        "sample_rate": _int_or_none(audio_stream.get("sample_rate")),
+        "channels": audio_stream.get("channels"),
+        "channel_layout": audio_stream.get("channel_layout"),
+        "stream_count": len(streams),
+        "streams": streams,
+    }
+
+
+def _run_audio_extract(input_data: dict[str, Any]) -> dict[str, Any]:
+    payload_json = _get_payload_json(input_data)
+    media_file_id = payload_json.get("media_file_id")
+    filename = str(payload_json.get("filename") or "media-file")
+    bucket = str(payload_json.get("bucket") or os.environ["RUNPOD_STORAGE_BUCKET"])
+    object_key = str(payload_json.get("object_key") or "")
+    if not object_key:
+        raise ValueError("object_key is required for audio_extract")
+
+    s3 = _build_s3_client()
+    output_key = f"media/audio/media-{media_file_id}/audio_extract.m4a"
+    with tempfile.TemporaryDirectory(prefix="audio-extract-") as tmpdir:
+        input_path = str(Path(tmpdir) / f"input{Path(filename).suffix or '.mov'}")
+        output_path = str(Path(tmpdir) / "audio_extract.m4a")
+        with open(input_path, "wb") as handle:
+            response = s3.get_object(Bucket=bucket, Key=object_key)
+            body = response["Body"]
+            while True:
+                chunk = body.read(1024 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_path,
+            "-vn",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "copy",
+            output_path,
+        ]
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=240)
+        except subprocess.CalledProcessError:
+            fallback = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-vn",
+                "-map",
+                "0:a:0",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                output_path,
+            ]
+            subprocess.run(fallback, check=True, capture_output=True, text=True, timeout=240)
+
+        ffprobe_json = _run_ffprobe(output_path)
+        metadata = _audio_metadata_from_ffprobe(ffprobe_json)
+        output_bytes = Path(output_path).read_bytes()
+        s3.put_object(
+            Bucket=bucket,
+            Key=output_key,
+            Body=output_bytes,
+            ContentType="audio/mp4",
+        )
+        head = s3.head_object(Bucket=bucket, Key=output_key)
+
+    size_bytes = len(output_bytes)
+    return {
+        "message": "audio-extract-ok",
+        "artifact_type": "audio_extract",
+        "media_file_id": media_file_id,
+        "bucket": bucket,
+        "object_key": output_key,
+        "content_type": "audio/mp4",
+        "size_bytes": size_bytes,
+        "read_back_ok": int(head.get("ContentLength") or 0) == size_bytes,
+        "duration_seconds": metadata.get("duration_seconds"),
+        "audio_codec": metadata.get("audio_codec"),
+        "sample_rate": metadata.get("sample_rate"),
+        "channels": metadata.get("channels"),
+        "bit_rate": metadata.get("bit_rate"),
+        "audio_metadata": metadata,
+    }
+
+
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
     if tipo == "storage_env_check":
@@ -452,6 +565,9 @@ def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
 
     if tipo == "metadata_probe_ffprobe":
         return _run_metadata_probe_ffprobe(input_data)
+
+    if tipo == "audio_extract":
+        return _run_audio_extract(input_data)
 
     if tipo == "event_candidates_mock":
         transcription = _get_transcription(payload_json)
