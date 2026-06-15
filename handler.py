@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -322,6 +323,113 @@ def _run_metadata_probe(input_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _fps_from_stream(stream: dict[str, Any]) -> float | None:
+    value = stream.get("avg_frame_rate") or stream.get("r_frame_rate")
+    if not value or value == "0/0":
+        return None
+    if isinstance(value, str) and "/" in value:
+        numerator, denominator = value.split("/", 1)
+        try:
+            denominator_float = float(denominator)
+            if denominator_float == 0:
+                return None
+            return round(float(numerator) / denominator_float, 3)
+        except ValueError:
+            return None
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _run_ffprobe(local_path: str) -> dict[str, Any]:
+    command = ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", local_path]
+    completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+    return json.loads(completed.stdout or "{}")
+
+
+def _run_metadata_probe_ffprobe(input_data: dict[str, Any]) -> dict[str, Any]:
+    payload_json = _get_payload_json(input_data)
+    media_file_id = payload_json.get("media_file_id")
+    filename = str(payload_json.get("filename") or "media-file")
+    mime_type = payload_json.get("mime_type")
+    bucket = str(payload_json.get("bucket") or os.environ["RUNPOD_STORAGE_BUCKET"])
+    object_key = str(payload_json.get("object_key") or "")
+    expected_checksum = payload_json.get("checksum")
+    if not object_key:
+        raise ValueError("object_key is required for metadata_probe_ffprobe")
+    s3 = _build_s3_client()
+    digest = hashlib.sha256()
+    size_bytes = 0
+    with tempfile.NamedTemporaryFile(prefix="metadata-ffprobe-", suffix=Path(filename).suffix, delete=True) as tmp:
+        response = s3.get_object(Bucket=bucket, Key=object_key)
+        body = response["Body"]
+        while True:
+            chunk = body.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
+            digest.update(chunk)
+            size_bytes += len(chunk)
+        tmp.flush()
+        ffprobe_json = _run_ffprobe(tmp.name)
+    streams = ffprobe_json.get("streams") or []
+    format_data = ffprobe_json.get("format") or {}
+    video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
+    audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), {})
+    def _float_or_none(value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+    def _int_or_none(value: Any) -> int | None:
+        try:
+            return int(float(value)) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+    sha256_value = digest.hexdigest()
+    probe = {
+        "media_file_id": media_file_id,
+        "probe_type": "metadata_probe_ffprobe",
+        "filename": filename,
+        "mime_type": mime_type,
+        "size_bytes": size_bytes,
+        "sha256": sha256_value,
+        "checksum_matches": expected_checksum == sha256_value if expected_checksum else None,
+        "extension": Path(filename).suffix,
+        "format_name": format_data.get("format_name"),
+        "format_long_name": format_data.get("format_long_name"),
+        "duration_seconds": _float_or_none(format_data.get("duration")),
+        "bit_rate": _int_or_none(format_data.get("bit_rate")),
+        "video_codec": video_stream.get("codec_name"),
+        "audio_codec": audio_stream.get("codec_name"),
+        "width": video_stream.get("width"),
+        "height": video_stream.get("height"),
+        "fps": _fps_from_stream(video_stream),
+        "stream_count": len(streams),
+        "streams": streams,
+        "storage_bucket": bucket,
+        "storage_object_key": object_key,
+        "method": "ffprobe",
+        "processed_with": "ffprobe_metadata_cpu_no_decode",
+    }
+    probe_body = json.dumps(probe, ensure_ascii=False, indent=2).encode("utf-8")
+    probe_key = f"media/probes/media-{media_file_id}/metadata_probe_ffprobe.json"
+    s3.put_object(Bucket=bucket, Key=probe_key, Body=probe_body, ContentType="application/json")
+    read_back = json.loads(s3.get_object(Bucket=bucket, Key=probe_key)["Body"].read().decode("utf-8"))
+    return {
+        "message": "metadata-probe-ffprobe-ok",
+        "artifact_type": "metadata_probe_ffprobe",
+        "media_file_id": media_file_id,
+        "bucket": bucket,
+        "object_key": probe_key,
+        "content_type": "application/json",
+        "size_bytes": len(probe_body),
+        "read_back_ok": read_back == probe,
+        "probe": probe,
+    }
+
+
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
     if tipo == "storage_env_check":
@@ -341,6 +449,9 @@ def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
 
     if tipo == "metadata_probe":
         return _run_metadata_probe(input_data)
+
+    if tipo == "metadata_probe_ffprobe":
+        return _run_metadata_probe_ffprobe(input_data)
 
     if tipo == "event_candidates_mock":
         transcription = _get_transcription(payload_json)
@@ -409,7 +520,7 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         result_json = _build_result_json(tipo, input_data)
         status = "completed"
         error_message = None
-    except (KeyError, BotoCoreError, ClientError, ValueError, TypeError) as exc:
+    except (KeyError, BotoCoreError, ClientError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         result_json = {
             "message": "storage-error" if tipo == "storage_test" else "worker-error",
             "tipo": tipo,

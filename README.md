@@ -327,3 +327,84 @@ Expected `result_json` shape:
 }
 ```
 
+## Metadata Probe Job
+
+The worker supports a lightweight technical metadata probe for media already stored in RunPod Storage.
+
+This job downloads the object as bytes, calculates size and SHA256, infers only a simple container label from filename/mime type, writes a JSON probe artifact, and sends the callback.
+
+It does not decode video, extract frames, run ffmpeg, transcribe audio, use OCR, load models, or use GPU.
+
+Job type:
+
+```text
+metadata_probe
+```
+
+Example payload:
+
+```json
+{
+  "input": {
+    "job_id": 123,
+    "tipo": "metadata_probe",
+    "payload_json": {
+      "media_file_id": 7,
+      "filename": "IMG_8136.MOV",
+      "mime_type": "video/quicktime",
+      "bucket": "zozga7skni",
+      "object_key": "media/originals/media-7/IMG_8136.MOV",
+      "size_bytes": 258705307,
+      "checksum": "sha256-value"
+    },
+    "callback_url": "https://app.meustatus.com/api/runpod/callback"
+  }
+}
+```
+
+Expected artifact:
+
+```text
+media/probes/media-<media_file_id>/metadata_probe.json
+```
+
+Expected `result_json` shape:
+
+```json
+{
+  "message": "metadata-probe-ok",
+  "artifact_type": "metadata_probe",
+  "media_file_id": 7,
+  "bucket": "zozga7skni",
+  "object_key": "media/probes/media-7/metadata_probe.json",
+  "content_type": "application/json",
+  "read_back_ok": true
+}
+```
+
+
+## Metadata Probe ffprobe Job
+
+The worker supports a technical ffprobe metadata job for media already stored in RunPod Storage.
+
+This job downloads the object to a temporary file, runs `ffprobe` only for metadata, writes a JSON artifact, and sends the callback. It does not transcribe, extract frames, run OCR, load AI models, or use GPU.
+
+Job type:
+
+```text
+metadata_probe_ffprobe
+```
+
+Docker requirement:
+
+```text
+ffmpeg package installed only to provide ffprobe
+```
+
+Expected artifact:
+
+```text
+media/probes/media-<media_file_id>/metadata_probe_ffprobe.json
+```
+
+Expected fields include duration, format_name, video_codec, audio_codec, width, height, fps, bit_rate and streams.
