@@ -102,7 +102,7 @@ def _run_storage_test(job_id: Any) -> dict[str, Any]:
 def _run_artifact_text_test(input_data: dict[str, Any]) -> dict[str, Any]:
     job_id = input_data.get("job_id")
     payload_json = _get_payload_json(input_data)
-    episode_title = str(payload_json.get("episode_title") or "Teste de integração RunPod Storage")
+    episode_title = str(payload_json.get("episode_title") or "Teste de integraÃ§Ã£o RunPod Storage")
     artifact_type = str(payload_json.get("artifact_type") or "transcricao_mock")
     bucket = os.environ["RUNPOD_STORAGE_BUCKET"]
     object_key = f"artifacts/text/job-{job_id}/transcricao_mock.txt"
@@ -551,9 +551,10 @@ def _run_whisper_transcribe(input_data: dict[str, Any]) -> dict[str, Any]:
     s3.put_object(Bucket=bucket, Key=srt_key, Body=srt_bytes, ContentType="application/x-subrip; charset=utf-8")
     s3.put_object(Bucket=bucket, Key=metadata_key, Body=metadata_bytes, ContentType="application/json")
 
+    suffix = "_base" if model_name == "base" else ""
     return {
         "message": "whisper-transcribe-ok",
-        "artifact_type": "transcricao_txt",
+        "artifact_type": f"transcricao_txt{suffix}",
         "media_file_id": media_file_id,
         "bucket": bucket,
         "object_key": txt_key,
@@ -567,7 +568,7 @@ def _run_whisper_transcribe(input_data: dict[str, Any]) -> dict[str, Any]:
         "audio_artifact_id": audio_artifact_id,
         "extra_artifacts": [
             {
-                "artifact_type": "transcricao_srt",
+                "artifact_type": f"transcricao_srt{suffix}",
                 "media_file_id": media_file_id,
                 "bucket": bucket,
                 "object_key": srt_key,
@@ -575,7 +576,7 @@ def _run_whisper_transcribe(input_data: dict[str, Any]) -> dict[str, Any]:
                 "size_bytes": len(srt_bytes),
             },
             {
-                "artifact_type": "transcricao_metadata",
+                "artifact_type": f"transcricao_metadata{suffix}",
                 "media_file_id": media_file_id,
                 "bucket": bucket,
                 "object_key": metadata_key,
