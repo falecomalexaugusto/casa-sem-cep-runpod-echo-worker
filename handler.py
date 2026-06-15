@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import boto3
@@ -239,6 +242,86 @@ def _run_media_upload_test(input_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _container_format(filename: str, mime_type: str | None) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".mov" or mime_type == "video/quicktime":
+        return "quicktime_or_unknown"
+    if suffix == ".mp4" or mime_type == "video/mp4":
+        return "mp4_or_unknown"
+    return "unknown"
+
+
+def _run_metadata_probe(input_data: dict[str, Any]) -> dict[str, Any]:
+    payload_json = _get_payload_json(input_data)
+    media_file_id = payload_json.get("media_file_id")
+    filename = str(payload_json.get("filename") or "media-file")
+    mime_type = payload_json.get("mime_type")
+    bucket = str(payload_json.get("bucket") or os.environ["RUNPOD_STORAGE_BUCKET"])
+    object_key = str(payload_json.get("object_key") or "")
+    expected_checksum = payload_json.get("checksum")
+
+    if not object_key:
+        raise ValueError("object_key is required for metadata_probe")
+
+    s3 = _build_s3_client()
+    digest = hashlib.sha256()
+    size_bytes = 0
+    with tempfile.NamedTemporaryFile(prefix="metadata-probe-", suffix=Path(filename).suffix, delete=True) as tmp:
+        response = s3.get_object(Bucket=bucket, Key=object_key)
+        body = response["Body"]
+        while True:
+            chunk = body.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
+            digest.update(chunk)
+            size_bytes += len(chunk)
+        tmp.flush()
+
+    sha256_value = digest.hexdigest()
+    probe = {
+        "media_file_id": media_file_id,
+        "probe_type": "metadata_probe",
+        "filename": filename,
+        "mime_type": mime_type,
+        "size_bytes": size_bytes,
+        "sha256": sha256_value,
+        "checksum_matches": expected_checksum == sha256_value if expected_checksum else None,
+        "extension": Path(filename).suffix,
+        "container_format": _container_format(filename, mime_type),
+        "duration_seconds": None,
+        "video_codec": None,
+        "audio_codec": None,
+        "width": None,
+        "height": None,
+        "fps": None,
+        "storage_bucket": bucket,
+        "storage_object_key": object_key,
+        "method": "python_basic",
+        "processed_with": "metadata_probe_cpu_no_decode",
+    }
+    probe_body = json.dumps(probe, ensure_ascii=False, indent=2).encode("utf-8")
+    probe_key = f"media/probes/media-{media_file_id}/metadata_probe.json"
+    s3.put_object(
+        Bucket=bucket,
+        Key=probe_key,
+        Body=probe_body,
+        ContentType="application/json",
+    )
+    read_back = json.loads(s3.get_object(Bucket=bucket, Key=probe_key)["Body"].read().decode("utf-8"))
+    return {
+        "message": "metadata-probe-ok",
+        "artifact_type": "metadata_probe",
+        "media_file_id": media_file_id,
+        "bucket": bucket,
+        "object_key": probe_key,
+        "content_type": "application/json",
+        "size_bytes": len(probe_body),
+        "read_back_ok": read_back == probe,
+        "probe": probe,
+    }
+
+
 def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
     payload_json = _get_payload_json(input_data)
     if tipo == "storage_env_check":
@@ -255,6 +338,9 @@ def _build_result_json(tipo: str, input_data: dict[str, Any]) -> dict[str, Any]:
 
     if tipo == "media_upload_test":
         return _run_media_upload_test(input_data)
+
+    if tipo == "metadata_probe":
+        return _run_metadata_probe(input_data)
 
     if tipo == "event_candidates_mock":
         transcription = _get_transcription(payload_json)
